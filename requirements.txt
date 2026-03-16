@@ -1,0 +1,45 @@
+# Genealogy OCR Pipeline — Python dependencies
+# Install: pip install -r requirements.txt
+#
+# System packages also required (not pip-installable):
+#   sudo apt install tesseract-ocr tesseract-ocr-pol tesseract-ocr-rus \
+#                    tesseract-ocr-deu tesseract-ocr-lat \
+#                    libvips-tools poppler-utils
+
+# ── Image processing ──────────────────────────────────────────────────────────
+opencv-python-headless>=4.9,<5     # cv2: grayscale, deskew, denoise, binarize
+                                   # headless = no GUI deps (safe for servers/WSL)
+Pillow>=10.0                       # PNG save with DPI metadata; TIFF multi-frame load
+numpy>=1.26                        # array ops used throughout cv2 calls
+
+# ── PDF extraction ────────────────────────────────────────────────────────────
+pdf2image>=1.17                    # wraps Poppler pdftoppm; PDF → PIL Image list
+
+# ── OCR ───────────────────────────────────────────────────────────────────────
+pytesseract>=0.3.10                # Python wrapper for Tesseract 5 CLI
+# hocr-to-alto is NOT on PyPI; m2_ocr.py ships a built-in fallback converter.
+# If you want the reference CLI tool: pip install hocr-tools  (provides hocr2alto)
+
+# ── Deep zoom tiles ───────────────────────────────────────────────────────────
+pyvips>=2.2                        # Python bindings for libvips (apt: libvips-tools)
+
+# ── XML parsing ───────────────────────────────────────────────────────────────
+lxml>=5.1                          # fast ALTO / hOCR parsing; stdlib ET used as fallback
+
+# ── Search index ──────────────────────────────────────────────────────────────
+meilisearch>=0.31                  # Meilisearch Python client (server installed separately)
+
+# ── Config ────────────────────────────────────────────────────────────────────
+PyYAML>=6.0                        # config.yaml loader
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+pytest>=8.0
+pytest-cov>=5.0
+# --- harvester (m0) ---
+internetarchive>=3.3       # Archive.org fetcher
+requests>=2.31             # all HTTP calls
+beautifulsoup4>=4.12       # dLibra HTML scraping
+sickle>=0.7                # OAI-PMH (FBC/dLibra — optional deeper metadata)
+tenacity>=8.2              # retries + exponential backoff
+pyyaml>=6.0                # config.yaml loading
+tqdm

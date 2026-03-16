@@ -33,6 +33,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 # ── make sure utils is importable when running the script directly ─────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -47,6 +48,56 @@ from utils import (
 )
 
 log = setup_logging(module_name="m1_preprocess")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Progress bar factory
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _file_bar(candidates: list, force: bool) -> tqdm:
+    """
+    Outer progress bar — one tick per input file.
+
+    bar_format breakdown:
+      {l_bar}   the left part: description + percentage
+      {bar}     the animated fill block
+      {r_bar}   right part: n/total, elapsed, ETA, rate
+    """
+    return tqdm(
+        candidates,
+        desc="Files",
+        unit="file",
+        dynamic_ncols=True,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} files  [{elapsed}<{remaining}]",
+        colour="cyan",
+    )
+
+
+def _page_bar(total_pages: int, filename: str) -> tqdm:
+    """
+    Inner progress bar — one tick per page within a file.
+
+    postfix fields updated as each page completes:
+      pg/s   pages per second (rolling)
+      skew   deskew angle detected on the last page
+      sz     pixel dimensions of the last output PNG
+    """
+    short = Path(filename).name
+    # Truncate long filenames so the bar doesn't wrap on narrow terminals
+    if len(short) > 35:
+        short = short[:16] + "…" + short[-16:]
+    return tqdm(
+        total=total_pages,
+        desc=f"  {short}",
+        unit="pg",
+        dynamic_ncols=True,
+        bar_format=(
+            "{l_bar}{bar}| {n_fmt}/{total_fmt} pages "
+            "[{elapsed}<{remaining}, {rate_fmt}]  {postfix}"
+        ),
+        colour="green",
+        leave=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,10 +128,6 @@ def extract_pages(file_path: Path, target_dpi: int) -> list[np.ndarray]:
         return [cv2.cvtColor(np.array(p), cv2.COLOR_RGB2BGR) for p in pil_pages]
 
     elif suffix in {".tiff", ".tif"}:
-        # TIFF can contain multiple frames (pages)
-        ret, frames = [], True
-        cap = cv2.VideoCapture(str(file_path))  # won't work for multi-frame TIFF
-        # Use Pillow instead, which handles multi-frame TIFF natively
         pil_img = Image.open(file_path)
         pages: list[np.ndarray] = []
         try:
@@ -97,7 +144,6 @@ def extract_pages(file_path: Path, target_dpi: int) -> list[np.ndarray]:
         if img is None:
             raise ValueError(f"OpenCV could not read: {file_path}")
 
-        # Check embedded DPI metadata via Pillow and upscale if needed
         pil_img = Image.open(file_path)
         dpi_info = pil_img.info.get("dpi", (target_dpi, target_dpi))
         actual_dpi = dpi_info[0] if dpi_info else target_dpi
@@ -118,7 +164,7 @@ def extract_pages(file_path: Path, target_dpi: int) -> list[np.ndarray]:
 def to_grayscale(img: np.ndarray) -> np.ndarray:
     """Step 2 — Convert BGR image to single-channel grayscale."""
     if len(img.shape) == 2:
-        return img  # already grayscale
+        return img
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
@@ -144,24 +190,19 @@ def deskew(gray: np.ndarray, min_angle: float, max_angle: float) -> tuple[np.nda
     5. Apply M to every pixel with warpAffine (bilinear interpolation,
        border replicated to avoid black edges).
 
-    Returns
-    -------
-    (corrected_image, detected_angle_deg)
+    Returns (corrected_image, detected_angle_deg).
     If the angle is outside [min_angle, max_angle], returns the original
     image unchanged with angle=0.0.
     """
-    # Dark pixels only (text)
     coords = np.column_stack(np.where(gray < 128))
 
     if coords.size == 0:
         log.debug("    Deskew: no dark pixels found, skipping.")
         return gray, 0.0
 
-    # minAreaRect expects float32 points in (x, y) order; np.where gives (row=y, col=x)
     pts = coords[:, ::-1].astype(np.float32)
-    raw_angle = cv2.minAreaRect(pts)[-1]  # in [-90, 0)
+    raw_angle = cv2.minAreaRect(pts)[-1]
 
-    # Convert to true skew angle
     angle = -(90 + raw_angle) if raw_angle < -45 else -raw_angle
 
     if not (min_angle < abs(angle) < max_angle):
@@ -207,8 +248,7 @@ def binarize(gray: np.ndarray, block_size: int = 31, c: int = 15) -> np.ndarray:
           0 (black)  otherwise
 
     This handles uneven illumination (e.g. book gutters, yellowed paper) far
-    better than a single global threshold.  *block_size* must be an odd integer;
-    larger values smooth over bigger illumination gradients.
+    better than a single global threshold.
     """
     return cv2.adaptiveThreshold(
         gray, 255,
@@ -234,9 +274,13 @@ def process_file(
     cfg: dict,
     out_dir: Path,
     force: bool = False,
+    file_bar: tqdm | None = None,
 ) -> int:
     """
     Process all pages of a single input file.
+
+    *file_bar* is the outer tqdm bar; we update its postfix with a summary
+    once the file is done so the user can see the running page total.
 
     Returns the number of pages successfully written.
     """
@@ -244,76 +288,117 @@ def process_file(
     target_dpi = cfg["target_dpi"]
     pre = cfg.get("preprocessing", {})
 
-    log.info("Processing '%s'  →  doc_id=%s", file_path.name, doc_id)
+    log.info("Processing '%s'  (doc_id=%s)", file_path.name, doc_id)
 
-    # Load the processed set once (faster than per-page manifest scan)
     done = processed_set(out_dir)
 
+    # ── Extract pages (PDF rendering is the slow part — log clearly) ──────
     try:
         pages = extract_pages(file_path, target_dpi)
     except Exception as exc:
         log.error("  Failed to extract pages: %s", exc)
+        if file_bar:
+            file_bar.set_postfix_str(f"ERROR: {exc}", refresh=True)
+        return 0
+
+    total_pages = len(pages)
+    log.info("  %d page(s) found", total_pages)
+
+    # Pages to actually process (skip already-done unless --force)
+    todo = [
+        (page_num, img)
+        for page_num, img in enumerate(pages, start=1)
+        if force or (doc_id, page_num) not in done
+    ]
+    skipped = total_pages - len(todo)
+
+    if skipped:
+        log.info("  %d page(s) already processed — skipping", skipped)
+
+    if not todo:
+        if file_bar:
+            file_bar.set_postfix_str(f"all {total_pages} pages already done", refresh=True)
         return 0
 
     written = 0
-    for page_num, img in enumerate(pages, start=1):
-        if not force and (doc_id, page_num) in done:
-            log.debug("  Page %d already processed, skipping.", page_num)
-            continue
+    t_file_start = time.perf_counter()
 
-        t_start = time.perf_counter()
+    # ── Per-page progress bar ─────────────────────────────────────────────
+    with _page_bar(len(todo), file_path.name) as pbar:
+        for page_num, img in todo:
 
-        # Step 2: grayscale
-        gray = to_grayscale(img)
+            t_start = time.perf_counter()
 
-        # Step 3: deskew
-        angle = 0.0
-        if pre.get("deskew_enabled", True):
-            gray, angle = deskew(
-                gray,
-                min_angle=pre.get("deskew_min_angle_deg", 0.5),
-                max_angle=pre.get("deskew_max_angle_deg", 15.0),
+            # Step 2: grayscale
+            gray = to_grayscale(img)
+
+            # Step 3: deskew
+            angle = 0.0
+            if pre.get("deskew_enabled", True):
+                gray, angle = deskew(
+                    gray,
+                    min_angle=pre.get("deskew_min_angle_deg", 0.5),
+                    max_angle=pre.get("deskew_max_angle_deg", 15.0),
+                )
+
+            # Step 4: denoise
+            if pre.get("denoise_enabled", True):
+                gray = denoise(gray, h=pre.get("denoise_h", 10))
+
+            # Step 5: binarize (optional)
+            binarized = False
+            if pre.get("binarize_enabled", False):
+                gray = binarize(
+                    gray,
+                    block_size=pre.get("binarize_block_size", 31),
+                    c=pre.get("binarize_c", 15),
+                )
+                binarized = True
+
+            # Step 6: save
+            stem = page_stem(doc_id, page_num)
+            out_path = out_dir / f"{stem}.png"
+            save_png(gray, out_path, dpi=target_dpi)
+
+            h_px, w_px = gray.shape[:2]
+            elapsed = round(time.perf_counter() - t_start, 2)
+
+            # Step 7: manifest
+            append_manifest(out_dir, {
+                "doc_id": doc_id,
+                "page": page_num,
+                "filename": out_path.name,
+                "source_file": file_path.name,
+                "width_px": w_px,
+                "height_px": h_px,
+                "dpi": target_dpi,
+                "deskew_angle_deg": angle,
+                "binarized": binarized,
+                "processing_time_s": elapsed,
+                "status": "ready",
+            })
+
+            written += 1
+
+            # ── Update the page bar postfix with live stats ───────────────
+            # tqdm.set_postfix() takes a dict; keys become "key=value" pairs
+            # shown to the right of the rate.
+            pbar.set_postfix(
+                pg=f"{page_num}/{total_pages}",
+                skew=f"{angle:+.1f}°",
+                px=f"{w_px}×{h_px}",
+                s=f"{elapsed:.1f}s",
+                refresh=False,   # batch the refresh with the tick below
             )
+            pbar.update(1)
 
-        # Step 4: denoise
-        if pre.get("denoise_enabled", True):
-            gray = denoise(gray, h=pre.get("denoise_h", 10))
-
-        # Step 5: binarize (optional)
-        binarized = False
-        if pre.get("binarize_enabled", False):
-            gray = binarize(
-                gray,
-                block_size=pre.get("binarize_block_size", 31),
-                c=pre.get("binarize_c", 15),
-            )
-            binarized = True
-
-        # Step 6: save
-        stem = page_stem(doc_id, page_num)
-        out_path = out_dir / f"{stem}.png"
-        save_png(gray, out_path, dpi=target_dpi)
-
-        h_px, w_px = gray.shape[:2]
-        elapsed = round(time.perf_counter() - t_start, 2)
-
-        # Step 7: manifest
-        append_manifest(out_dir, {
-            "doc_id": doc_id,
-            "page": page_num,
-            "filename": out_path.name,
-            "source_file": file_path.name,
-            "width_px": w_px,
-            "height_px": h_px,
-            "dpi": target_dpi,
-            "deskew_angle_deg": angle,
-            "binarized": binarized,
-            "processing_time_s": elapsed,
-            "status": "ready",
-        })
-
-        log.info("  ✓ Page %03d → %s  (%.2fs, skew=%.1f°)", page_num, out_path.name, elapsed, angle)
-        written += 1
+    # ── Summary line for the outer file bar ───────────────────────────────
+    total_elapsed = time.perf_counter() - t_file_start
+    rate = written / total_elapsed if total_elapsed > 0 else 0
+    summary = f"{written}/{total_pages} pg  {rate:.1f} pg/s  {total_elapsed:.0f}s total"
+    log.info("  ✓ %s", summary)
+    if file_bar:
+        file_bar.set_postfix_str(summary, refresh=True)
 
     return written
 
@@ -343,7 +428,7 @@ def main() -> None:
     cfg = load_config(args.config)
     root = Path(args.config).parent if args.config else Path(__file__).resolve().parent.parent
 
-    in_dir = root / cfg["paths"]["input_scans"]
+    in_dir  = root / cfg["paths"]["input_scans"]
     out_dir = root / cfg["paths"]["output_cleaned"]
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -359,11 +444,27 @@ def main() -> None:
         return
 
     total_pages = 0
-    for file_path in candidates:
-        if not file_path.exists():
-            log.error("File not found: %s", file_path)
-            continue
-        total_pages += process_file(file_path, cfg, out_dir, force=args.force)
+
+    # ── Outer file progress bar ───────────────────────────────────────────
+    with _file_bar(candidates, args.force) as fbar:
+        for file_path in fbar:
+            # Show the current filename in the bar description while working
+            short = file_path.name
+            if len(short) > 40:
+                short = short[:18] + "…" + short[-18:]
+            fbar.set_description(f"Files  [{short}]")
+
+            if not file_path.exists():
+                log.error("File not found: %s", file_path)
+                fbar.set_postfix_str("NOT FOUND", refresh=True)
+                continue
+
+            pages_written = process_file(
+                file_path, cfg, out_dir,
+                force=args.force,
+                file_bar=fbar,
+            )
+            total_pages += pages_written
 
     log.info("Done. Total pages processed: %d", total_pages)
 

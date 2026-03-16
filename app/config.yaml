@@ -1,0 +1,43 @@
+paths:
+  input_scans: data/input_scans
+  output_cleaned: data/output_cleaned
+  output_ocr: data/output_ocr
+  output_dzi: data/output_dzi
+  output_index: data/output_index
+harvest:
+  rate_limit_delay_s: 2.0
+  max_retries: 5
+  retry_wait_min_s: 4
+  retry_wait_max_s: 60
+  preferred_format:
+    archive_org:
+    - Text PDF
+    - Single Page Processed JP2 ZIP
+    polona:
+    - pdf
+    - iiif_jpg
+    dlibra:
+    - pdf
+    - djvu
+    szwa:
+    - pdf
+    - jpg
+  djvu_convert: true
+  szwa_api_key: ''
+target_dpi: 300
+preprocessing:
+  deskew_enabled: true
+  deskew_min_angle_deg: 0.5
+  deskew_max_angle_deg: 15.0
+  denoise_enabled: true
+  denoise_h: 10
+  binarize_enabled: false
+  binarize_block_size: 31
+  binarize_c: 15
+ocr:
+  engine: tesseract
+  language: pol
+indexer:
+  meilisearch_url: http://localhost:7700
+  meilisearch_api_key: ''
+  index_name: archive_documents
