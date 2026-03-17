@@ -137,6 +137,9 @@
     .btn.danger  { color: var(--red); }
     .btn.danger:hover { background: rgba(224,92,92,0.12); border-color: var(--red); }
 
+    .btn.similar { color: #81d4fa; }
+    .btn.similar:hover { background: rgba(129,212,250,0.1); border-color: #4fc3f7; }
+
     .btn.ml-auto { margin-left: auto; }
 
     /* ── Filter / search bar ──────────────────────────────────────────────── */
@@ -333,6 +336,117 @@
     .confirm-overlay.active { display: flex; }
     .confirm-btns { display: flex; gap: 10px; }
 
+    /* ── Similar items modal ──────────────────────────────────────────────── */
+    .similar-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(10,12,20,0.92);
+      z-index: 200;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .similar-overlay.active { display: flex; }
+
+    .similar-header {
+      flex-shrink: 0;
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-raised);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .similar-title { font-size: 12px; color: var(--text-bright); font-weight: 500; }
+    .similar-ref   { font-size: 10px; color: var(--muted); margin-top: 2px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+
+    .similar-close {
+      flex-shrink: 0;
+      background: transparent; border: none; color: var(--muted);
+      font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
+    }
+    .similar-close:hover { color: var(--text-bright); }
+
+    .similar-threshold {
+      flex-shrink: 0;
+      padding: 6px 14px;
+      border-bottom: 1px solid var(--border-soft);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .similar-threshold input[type=range] { flex: 1; accent-color: var(--amber); }
+    .similar-threshold span { min-width: 28px; color: var(--amber); font-weight: 600; }
+
+    .similar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .similar-list::-webkit-scrollbar       { width: 5px; }
+    .similar-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .sim-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border-soft);
+      background: var(--bg-item);
+      cursor: pointer;
+      transition: border-color 0.12s, background 0.12s;
+    }
+    .sim-item:hover  { background: var(--bg-hover); border-color: #4fc3f7; }
+    .sim-item.checked { border-color: var(--amber-dim); background: var(--amber-glow); }
+    .sim-item input[type=checkbox] { accent-color: var(--amber); flex-shrink: 0; }
+
+    .sim-item-body { flex: 1; min-width: 0; }
+    .sim-item-title { font-size: 11px; color: var(--text-bright); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sim-item-meta  { font-size: 9px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .sim-score {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+      min-width: 36px;
+      text-align: center;
+    }
+    .sim-score.high   { background: rgba(76,175,110,0.2); color: #4caf6e; }
+    .sim-score.medium { background: rgba(200,169,110,0.2); color: var(--amber); }
+    .sim-score.low    { background: rgba(90,99,128,0.2);  color: var(--muted); }
+
+    .similar-footer {
+      flex-shrink: 0;
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-raised);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .similar-scanning {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 20px;
+      text-align: center;
+      flex: 1;
+    }
+    .similar-none {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 20px;
+      text-align: center;
+    }
+
     /* ── Animations ───────────────────────────────────────────────────────── */
     @keyframes slideIn {
       from { opacity:0; transform: translateY(-4px); }
@@ -410,6 +524,32 @@
     Right-click any archive item and choose<br>
     <em>📥 Save to Harvest Queue</em>
   </p>
+</div>
+
+<!-- ── Similar items modal ──────────────────────────────────────────────────── -->
+<div class="similar-overlay" id="similar-overlay">
+  <div class="similar-header">
+    <div style="min-width:0">
+      <div class="similar-title">🔍 Similar items on this page</div>
+      <div class="similar-ref" id="similar-ref-title"></div>
+    </div>
+    <button class="similar-close" id="similar-close">×</button>
+  </div>
+
+  <div class="similar-threshold">
+    <span>Min match:</span>
+    <input type="range" id="similar-threshold" min="50" max="95" step="5" value="75">
+    <span id="similar-threshold-label">75%</span>
+    <button class="btn" id="similar-rescan" style="padding:3px 8px;font-size:10px">Rescan</button>
+  </div>
+
+  <div class="similar-list" id="similar-list"></div>
+
+  <div class="similar-footer">
+    <button class="btn" id="similar-select-all" style="font-size:10px;padding:4px 8px">Select all</button>
+    <button class="btn" id="similar-select-none" style="font-size:10px;padding:4px 8px">None</button>
+    <button class="btn primary" id="similar-add-selected" style="margin-left:auto">Add selected</button>
+  </div>
 </div>
 
 <!-- ── Confirm overlay ─────────────────────────────────────────────────────── -->

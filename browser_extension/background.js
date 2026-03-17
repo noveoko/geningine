@@ -11,15 +11,19 @@
 // ─── Context menu setup ───────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
-  // Show menu when right-clicking a hyperlink OR anywhere on the page
-  // (covers both search-results pages and individual item pages)
   chrome.contextMenus.create({
     id:       'hqb-save',
     title:    '📥  Save to Harvest Queue',
     contexts: ['link', 'page'],
   });
 
-  // Initialise storage if first install
+  // Second entry: save the item AND scan the page for fuzzy-similar titles
+  chrome.contextMenus.create({
+    id:       'hqb-save-similar',
+    title:    '🔍  Save + Find Similar (≥75% match)',
+    contexts: ['link', 'page'],
+  });
+
   chrome.storage.local.get('harvestQueue', ({ harvestQueue }) => {
     if (!harvestQueue) {
       chrome.storage.local.set({ harvestQueue: [] });
@@ -31,67 +35,104 @@ chrome.runtime.onInstalled.addListener(() => {
 // ─── Context menu click handler ───────────────────────────────────────────────
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== 'hqb-save') return;
+  if (info.menuItemId !== 'hqb-save' && info.menuItemId !== 'hqb-save-similar') return;
 
-  // Prefer the link's own URL; fall back to the current page URL.
-  // This lets users:
-  //   A) Right-click a search-result link  → captures that item's URL
-  //   B) Right-click anywhere on an item's own detail page → captures page URL
-  const targetUrl = info.linkUrl || info.pageUrl;
+  const findSimilar = (info.menuItemId === 'hqb-save-similar');
+  const targetUrl   = info.linkUrl || info.pageUrl;
 
-  let entry = null;
+  // ── Step 1: extract and save the clicked item ──────────────────────────────
+  let entry    = null;
   let feedback = 'saved';
 
   try {
-    // Ask the content script to: (a) resolve the URL against site profiles,
-    // and (b) harvest nearby DOM metadata (title, etc.).
     entry = await chrome.tabs.sendMessage(tab.id, {
-      action:    'extractItemData',
-      targetUrl: targetUrl,
-      pageUrl:   info.pageUrl,
+      action: 'extractItemData', targetUrl, pageUrl: info.pageUrl,
     });
-  } catch (err) {
-    // Content script unavailable (e.g. chrome:// pages, PDFs).
-    // Build a minimal fallback entry ourselves from the URL alone.
-    entry = buildFallbackEntry(targetUrl);
+  } catch (_) {
+    entry    = buildFallbackEntry(targetUrl);
     feedback = 'fallback';
   }
-
   if (!entry) {
-    // Content script returned null — unrecognised URL pattern.
-    entry = buildFallbackEntry(targetUrl);
+    entry    = buildFallbackEntry(targetUrl);
     feedback = 'fallback';
   }
 
-  // ── Persist ────────────────────────────────────────────────────────────────
-  const { harvestQueue = [] } = await chrome.storage.local.get('harvestQueue');
+  let { harvestQueue = [] } = await chrome.storage.local.get('harvestQueue');
 
-  // Deduplication: same source + same id/url means it's already in the queue.
-  const isDup = harvestQueue.some(existing => isSameItem(existing, entry));
-
+  const isDup = harvestQueue.some(e => isSameItem(e, entry));
   if (!isDup) {
     harvestQueue.push(entry);
-    await chrome.storage.local.set({ harvestQueue });
   } else {
     feedback = 'duplicate';
   }
 
-  // ── Badge ──────────────────────────────────────────────────────────────────
+  // ── Step 2 (optional): fuzzy-scan the page for similar titles ─────────────
+  let similarAdded = 0;
+
+  if (findSimilar && feedback !== 'duplicate') {
+    // Use the item's note as the reference title (our best title proxy).
+    // Fall back to id or the last path segment of the URL.
+    const refTitle = entry.note
+      || entry.id
+      || (entry.url || '').split('/').pop()
+      || '';
+
+    if (refTitle) {
+      let similarResults = [];
+      try {
+        similarResults = await chrome.tabs.sendMessage(tab.id, {
+          action: 'findSimilar',
+          referenceTitle: refTitle,
+          threshold: 0.75,
+        });
+      } catch (_) { /* content script unavailable */ }
+
+      for (const { entry: sim } of (similarResults || [])) {
+        if (isSameItem(sim, entry)) continue;
+        if (harvestQueue.some(e => isSameItem(e, sim))) continue;
+        harvestQueue.push(sim);
+        similarAdded++;
+      }
+    }
+  }
+
+  await chrome.storage.local.set({ harvestQueue });
   updateBadge(harvestQueue.length);
 
-  // ── Toast in the page ─────────────────────────────────────────────────────
-  const messages = {
-    saved:     `✅  Saved to queue (${harvestQueue.length} items)`,
-    fallback:  `⚠️  Saved with limited metadata (${harvestQueue.length} items)`,
-    duplicate: '🔁  Already in queue — skipped',
-  };
+  // ── Toast ──────────────────────────────────────────────────────────────────
+  let toastMsg, toastType;
+  if (feedback === 'duplicate') {
+    toastMsg  = '🔁  Already in queue — skipped';
+    toastType = 'duplicate';
+  } else if (findSimilar && similarAdded > 0) {
+    toastMsg  = `✅  Saved + ${similarAdded} similar item${similarAdded !== 1 ? 's' : ''} added (${harvestQueue.length} total)`;
+    toastType = 'similar';
+  } else if (findSimilar && similarAdded === 0) {
+    toastMsg  = `✅  Saved — no other similar items found on this page (${harvestQueue.length} total)`;
+    toastType = 'saved';
+  } else if (feedback === 'fallback') {
+    toastMsg  = `⚠️  Saved with limited metadata (${harvestQueue.length} items)`;
+    toastType = 'fallback';
+  } else {
+    toastMsg  = `✅  Saved to queue (${harvestQueue.length} items)`;
+    toastType = 'saved';
+  }
+
   try {
     await chrome.tabs.sendMessage(tab.id, {
-      action:  'showToast',
-      message: messages[feedback],
-      type:    feedback,
+      action: 'showToast', message: toastMsg, type: toastType,
     });
   } catch (_) { /* tab may not accept messages */ }
+});
+
+// ─── Internal message listener (popup → background) ──────────────────────────
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.action === '_syncBadge') {
+    chrome.storage.local.get('harvestQueue', ({ harvestQueue = [] }) => {
+      updateBadge(harvestQueue.length);
+    });
+  }
 });
 
 

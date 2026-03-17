@@ -180,7 +180,18 @@ function render() {
       removeItem(realIdx);
     });
 
-    card.append(body, removeBtn);
+    // ── Find-similar button ───────────────────────────────────────────────────
+    const simBtn = document.createElement('button');
+    simBtn.className = 'item-remove similar';
+    simBtn.title = 'Find similar items on active tab';
+    simBtn.innerHTML = '≈';
+    simBtn.style.cssText = 'font-size:15px;margin-top:0;';
+    simBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSimilarModal(entry);
+    });
+
+    card.append(body, simBtn, removeBtn);
     $list.appendChild(card);
   });
 
@@ -281,6 +292,206 @@ chrome.storage.onChanged.addListener((changes) => {
     queue = changes.harvestQueue.newValue || [];
     render();
   }
+});
+
+// ─── Similar items modal ──────────────────────────────────────────────────────
+
+const $simOverlay   = document.getElementById('similar-overlay');
+const $simRefTitle  = document.getElementById('similar-ref-title');
+const $simList      = document.getElementById('similar-list');
+const $simThreshold = document.getElementById('similar-threshold');
+const $simLabel     = document.getElementById('similar-threshold-label');
+
+/** The entry whose "≈" button was clicked — used as the fuzzy reference */
+let _simSourceEntry = null;
+
+/** Raw results from the last scan: Array<{entry, score, title}> */
+let _simResults = [];
+
+/**
+ * Open the modal and kick off a scan for items similar to `sourceEntry`.
+ * We message the content script on the currently-active tab.
+ */
+async function openSimilarModal(sourceEntry) {
+  _simSourceEntry = sourceEntry;
+  $simOverlay.classList.add('active');
+
+  // Show the reference title the user is matching against
+  const refTitle = sourceEntry.note || sourceEntry.id
+    || (sourceEntry.url || '').split('/').pop() || '(unknown title)';
+  $simRefTitle.textContent = `Matching: "${refTitle}"`;
+
+  await runScan(refTitle);
+}
+
+async function runScan(refTitle) {
+  const threshold = parseInt($simThreshold.value, 10) / 100;
+
+  $simList.innerHTML = '<div class="similar-scanning">⏳ Scanning page…</div>';
+  document.getElementById('similar-add-selected').disabled = true;
+
+  // Get the active tab in the current window
+  let tabId = null;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab?.id;
+  } catch (_) { /* permissions edge case */ }
+
+  if (!tabId) {
+    $simList.innerHTML = '<div class="similar-none">⚠ Could not reach the active tab.<br>Navigate to an archive page first.</div>';
+    return;
+  }
+
+  try {
+    _simResults = await chrome.tabs.sendMessage(tabId, {
+      action: 'findSimilar',
+      referenceTitle: refTitle,
+      threshold,
+    });
+  } catch (err) {
+    $simList.innerHTML = '<div class="similar-none">⚠ Content script not reachable.<br>Reload the archive tab and try again.</div>';
+    return;
+  }
+
+  // Filter out items already in the queue
+  _simResults = (_simResults || []).filter(
+    ({ entry }) => !queue.some(e => isSameItemPopup(e, entry))
+  );
+
+  renderSimResults();
+  document.getElementById('similar-add-selected').disabled = false;
+}
+
+/**
+ * Render the similarity result cards inside the modal.
+ * Each card has a checkbox, the title, a score badge, and the source/id.
+ */
+function renderSimResults() {
+  $simList.innerHTML = '';
+
+  if (_simResults.length === 0) {
+    $simList.innerHTML = '<div class="similar-none">No new similar items found on this page<br>at the current threshold.</div>';
+    return;
+  }
+
+  for (let i = 0; i < _simResults.length; i++) {
+    const { entry, score, title } = _simResults[i];
+    const pct = Math.round(score * 100);
+
+    const item = document.createElement('label');
+    item.className = 'sim-item';
+    item.htmlFor = `sim-cb-${i}`;
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id   = `sim-cb-${i}`;
+    cb.checked = true;  // default: select all found matches
+    cb.addEventListener('change', () => {
+      item.classList.toggle('checked', cb.checked);
+    });
+    item.classList.add('checked');
+
+    const body = document.createElement('div');
+    body.className = 'sim-item-body';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'sim-item-title';
+    titleEl.textContent = title || entry.note || entry.id || entry.url || '—';
+    titleEl.title = titleEl.textContent;
+
+    const metaEl = document.createElement('div');
+    metaEl.className = 'sim-item-meta';
+    // Show the source identifier inline
+    const srcLabel = { archive_org:'archive.org', polona:'polona.pl', dlibra:'dLibra', szwa:'SzWA', unknown:'?' };
+    const idStr = entry.id || entry.url?.replace(/^https?:\/\//, '') || '';
+    metaEl.textContent = `${srcLabel[entry.source] || entry.source} — ${idStr.slice(0, 60)}`;
+
+    body.append(titleEl, metaEl);
+
+    const scoreBadge = document.createElement('div');
+    const cls = pct >= 90 ? 'high' : pct >= 75 ? 'medium' : 'low';
+    scoreBadge.className = `sim-score ${cls}`;
+    scoreBadge.textContent = `${pct}%`;
+    scoreBadge.title = `Fuzzy similarity: ${pct}%`;
+
+    item.append(cb, body, scoreBadge);
+    $simList.appendChild(item);
+  }
+}
+
+/** Popup-side duplicate check (mirrors background.js isSameItem) */
+function isSameItemPopup(a, b) {
+  if (a.source !== b.source) return false;
+  if (a.id  && b.id)  return a.id  === b.id;
+  if (a.url && b.url) return a.url === b.url;
+  if (a.zespol && b.zespol) return a.zespol === b.zespol && a.jednostka === b.jednostka;
+  return false;
+}
+
+// ─── Similar modal event wiring ───────────────────────────────────────────────
+
+document.getElementById('similar-close').addEventListener('click', () => {
+  $simOverlay.classList.remove('active');
+});
+
+$simThreshold.addEventListener('input', () => {
+  $simLabel.textContent = `${$simThreshold.value}%`;
+});
+
+document.getElementById('similar-rescan').addEventListener('click', async () => {
+  if (!_simSourceEntry) return;
+  const refTitle = _simSourceEntry.note || _simSourceEntry.id
+    || (_simSourceEntry.url || '').split('/').pop() || '';
+  await runScan(refTitle);
+});
+
+document.getElementById('similar-select-all').addEventListener('click', () => {
+  $simList.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.checked = true;
+    cb.closest('.sim-item')?.classList.add('checked');
+  });
+});
+
+document.getElementById('similar-select-none').addEventListener('click', () => {
+  $simList.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.checked = false;
+    cb.closest('.sim-item')?.classList.remove('checked');
+  });
+});
+
+document.getElementById('similar-add-selected').addEventListener('click', async () => {
+  const checkboxes = [...$simList.querySelectorAll('input[type=checkbox]')];
+  const toAdd = checkboxes
+    .map((cb, i) => cb.checked ? _simResults[i] : null)
+    .filter(Boolean);
+
+  if (toAdd.length === 0) {
+    $simOverlay.classList.remove('active');
+    return;
+  }
+
+  let added = 0;
+  for (const { entry } of toAdd) {
+    if (!queue.some(e => isSameItemPopup(e, entry))) {
+      queue.push(entry);
+      added++;
+    }
+  }
+
+  if (added > 0) {
+    await persist();
+    render();
+  }
+
+  $simOverlay.classList.remove('active');
+
+  // Brief confirmation flash on the badge
+  $badge.style.background = '#4caf6e';
+  $badge.textContent = `+${added}`;
+  setTimeout(() => {
+    $badge.style.background = '';
+    $badge.textContent = queue.length;
+  }, 1200);
 });
 
 // ── Boot ────────────────────────────────────────────────────────────────────
