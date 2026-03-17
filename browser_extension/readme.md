@@ -1,5 +1,5 @@
 **To load the extension:**
-1. Unzip `harvest-queue-builder.zip`
+1. Copy files from `browser_extension` directory
 2. Go to `chrome://extensions` → enable **Developer mode** (top-right toggle)
 3. Click **Load unpacked** → select the `harvest-queue-builder/` folder
 
