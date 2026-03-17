@@ -83,7 +83,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         similarResults = await chrome.tabs.sendMessage(tab.id, {
           action: 'findSimilar',
           referenceTitle: refTitle,
-          threshold: 0.75,
+          threshold: 0.55,
         });
       } catch (_) { /* content script unavailable */ }
 

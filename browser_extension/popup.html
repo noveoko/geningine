@@ -370,16 +370,75 @@
 
     .similar-threshold {
       flex-shrink: 0;
-      padding: 6px 14px;
+      padding: 8px 14px;
       border-bottom: 1px solid var(--border-soft);
       display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .threshold-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+    }
+
+    .threshold-presets { display: flex; flex-direction: column; gap: 5px; }
+
+    .preset-btns {
+      display: flex;
+      gap: 5px;
+    }
+
+    .preset-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 8px;
+      gap: 2px;
+      padding: 5px 4px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-item);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      line-height: 1.2;
+    }
+    .preset-btn span {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      transition: color 0.12s;
+    }
+    .preset-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--amber-dim);
+      color: var(--text);
+    }
+    .preset-btn:hover span { color: var(--amber); }
+    .preset-btn.active {
+      background: var(--amber-glow);
+      border-color: var(--amber-dim);
+      color: var(--text-bright);
+    }
+    .preset-btn.active span { color: var(--amber); }
+
+    .threshold-slider-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
       font-size: 10px;
       color: var(--muted);
     }
-    .similar-threshold input[type=range] { flex: 1; accent-color: var(--amber); }
-    .similar-threshold span { min-width: 28px; color: var(--amber); font-weight: 600; }
+    .threshold-slider-label { white-space: nowrap; }
+    .threshold-slider-row input[type=range] { flex: 1; accent-color: var(--amber); height: 3px; }
+    .threshold-slider-row > span:last-of-type { min-width: 28px; color: var(--amber); font-weight: 600; font-size: 11px; }
 
     .similar-list {
       flex: 1;
@@ -537,10 +596,21 @@
   </div>
 
   <div class="similar-threshold">
-    <span>Min match:</span>
-    <input type="range" id="similar-threshold" min="50" max="95" step="5" value="75">
-    <span id="similar-threshold-label">75%</span>
-    <button class="btn" id="similar-rescan" style="padding:3px 8px;font-size:10px">Rescan</button>
+    <div class="threshold-presets">
+      <span class="threshold-label">Match threshold</span>
+      <div class="preset-btns">
+        <button class="preset-btn" data-value="40" title="Very loose — catches abbreviated titles and partial matches">Loose<span>40%</span></button>
+        <button class="preset-btn active" data-value="55" title="Default — good balance for archive titles with path noise">Default<span>55%</span></button>
+        <button class="preset-btn" data-value="70" title="Strict — same series / edition, different year or volume">Strict<span>70%</span></button>
+        <button class="preset-btn" data-value="85" title="Exact — nearly identical titles only">Exact<span>85%</span></button>
+      </div>
+    </div>
+    <div class="threshold-slider-row">
+      <span class="threshold-slider-label">Fine-tune:</span>
+      <input type="range" id="similar-threshold" min="25" max="95" step="5" value="55">
+      <span id="similar-threshold-label">55%</span>
+      <button class="btn" id="similar-rescan" style="padding:3px 8px;font-size:10px">↺ Rescan</button>
+    </div>
   </div>
 
   <div class="similar-list" id="similar-list"></div>

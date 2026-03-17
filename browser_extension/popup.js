@@ -434,8 +434,24 @@ document.getElementById('similar-close').addEventListener('click', () => {
   $simOverlay.classList.remove('active');
 });
 
+/** Sync preset button highlight and label to a given value (string or number) */
+function syncThresholdUI(value) {
+  const v = parseInt(value, 10);
+  $simThreshold.value   = v;
+  $simLabel.textContent = `${v}%`;
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.value, 10) === v);
+  });
+}
+
+// Preset buttons → update controls (no auto-rescan; user clicks ↺ to apply)
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => syncThresholdUI(btn.dataset.value));
+});
+
+// Manual slider drag → sync label + clear preset highlight if between presets
 $simThreshold.addEventListener('input', () => {
-  $simLabel.textContent = `${$simThreshold.value}%`;
+  syncThresholdUI($simThreshold.value);
 });
 
 document.getElementById('similar-rescan').addEventListener('click', async () => {

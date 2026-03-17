@@ -224,4 +224,12 @@ app/data/output_index/
 profile_output/
 
 # But keep the queue and the manifest schema visible in git
+!app/data/config/harvest_queue.json\# Pipeline data — downloaded source files and all generated outputs
+app/data/input_scans/
+app/data/output_cleaned/
+app/data/output_dzi/
+app/data/output_ocr/
+app/data/output_index/
+
+# But keep the queue and the manifest schema visible in git
 !app/data/config/harvest_queue.json
