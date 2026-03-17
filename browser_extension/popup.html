@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Harvest Queue</title>
+  <style>
+    /* ── Fonts ────────────────────────────────────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Crimson+Pro:wght@400;600&display=swap');
+
+    /* ── Tokens ───────────────────────────────────────────────────────────── */
+    :root {
+      --bg:          #0f1117;
+      --bg-raised:   #171b26;
+      --bg-item:     #1c2130;
+      --bg-hover:    #212840;
+      --border:      #2a3044;
+      --border-soft: #222840;
+      --amber:       #c8a96e;
+      --amber-dim:   #8a7048;
+      --amber-glow:  rgba(200,169,110,0.12);
+      --green:       #4caf6e;
+      --red:         #e05c5c;
+      --muted:       #5a6380;
+      --text:        #c8cfe0;
+      --text-bright: #e8ecf4;
+      --mono:        'IBM Plex Mono', 'Courier New', monospace;
+      --serif:       'Crimson Pro', Georgia, serif;
+      --radius:      6px;
+    }
+
+    /* ── Reset ────────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 400px;
+      min-height: 200px;
+      max-height: 580px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      overflow: hidden;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────────────── */
+    .header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-raised);
+      gap: 10px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo {
+      width: 28px;
+      height: 28px;
+      flex-shrink: 0;
+    }
+
+    .header-title {
+      font-family: var(--serif);
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--amber);
+      letter-spacing: 0.01em;
+    }
+
+    .header-sub {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 1px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .badge {
+      background: var(--amber);
+      color: var(--bg);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 20px;
+      min-width: 24px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    /* ── Toolbar ──────────────────────────────────────────────────────────── */
+    .toolbar {
+      flex-shrink: 0;
+      display: flex;
+      gap: 6px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      background: var(--bg-raised);
+    }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover  { background: var(--bg-hover); border-color: var(--amber-dim); }
+    .btn:active { background: var(--amber-glow); }
+
+    .btn.primary {
+      background: var(--amber-glow);
+      border-color: var(--amber-dim);
+      color: var(--amber);
+    }
+    .btn.primary:hover { background: rgba(200,169,110,0.2); border-color: var(--amber); }
+
+    .btn.danger  { color: var(--red); }
+    .btn.danger:hover { background: rgba(224,92,92,0.12); border-color: var(--red); }
+
+    .btn.ml-auto { margin-left: auto; }
+
+    /* ── Filter / search bar ──────────────────────────────────────────────── */
+    .filter-bar {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .filter-bar input {
+      width: 100%;
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 5px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .filter-bar input::placeholder { color: var(--muted); }
+    .filter-bar input:focus { border-color: var(--amber-dim); }
+
+    /* ── Queue list ───────────────────────────────────────────────────────── */
+    .queue-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .queue-list::-webkit-scrollbar       { width: 5px; }
+    .queue-list::-webkit-scrollbar-track { background: transparent; }
+    .queue-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Queue item card ──────────────────────────────────────────────────── */
+    .item-card {
+      background: var(--bg-item);
+      border: 1px solid var(--border-soft);
+      border-left: 3px solid var(--amber-dim);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      transition: border-color 0.15s;
+      position: relative;
+    }
+    .item-card:hover { border-left-color: var(--amber); }
+    .item-card.unknown { border-left-color: var(--muted); }
+
+    .item-body { flex: 1; min-width: 0; }
+
+    .item-source {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--bg);
+      background: var(--amber-dim);
+      padding: 1px 6px;
+      border-radius: 3px;
+      margin-bottom: 4px;
+    }
+
+    .source-archive_org { background: #3a6b9e; }
+    .source-polona      { background: #8e4a8e; }
+    .source-dlibra      { background: #3a7a5e; }
+    .source-szwa        { background: #7a5e3a; }
+    .source-unknown     { background: #555; }
+
+    .item-id {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-bright);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .item-note {
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-style: italic;
+    }
+
+    .item-url {
+      font-size: 9px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+      opacity: 0.7;
+    }
+
+    .item-remove {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0;
+      transition: color 0.15s, background 0.15s;
+      margin-top: 1px;
+    }
+    .item-remove:hover { color: var(--red); background: rgba(224,92,92,0.12); }
+
+    /* ── Edit note inline ─────────────────────────────────────────────────── */
+    .item-note-input {
+      display: none;
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--amber-dim);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-style: italic;
+      outline: none;
+      padding: 1px 0;
+    }
+    .item-note-input:focus { border-bottom-color: var(--amber); }
+    .item-card.editing .item-note       { display: none; }
+    .item-card.editing .item-note-input { display: block; }
+
+    /* ── Empty state ──────────────────────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      gap: 8px;
+      color: var(--muted);
+      text-align: center;
+      flex: 1;
+    }
+    .empty-state svg { opacity: 0.3; margin-bottom: 4px; }
+    .empty-state p   { font-size: 12px; line-height: 1.5; }
+    .empty-state em  { color: var(--amber-dim); font-style: normal; }
+
+    /* ── Footer ───────────────────────────────────────────────────────────── */
+    .footer {
+      flex-shrink: 0;
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-raised);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .footer a {
+      color: var(--amber-dim);
+      text-decoration: none;
+      margin-left: auto;
+    }
+    .footer a:hover { color: var(--amber); }
+
+    /* ── Confirm overlay ──────────────────────────────────────────────────── */
+    .confirm-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(10,12,20,0.85);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text-bright);
+      text-align: center;
+      padding: 20px;
+    }
+    .confirm-overlay.active { display: flex; }
+    .confirm-btns { display: flex; gap: 10px; }
+
+    /* ── Animations ───────────────────────────────────────────────────────── */
+    @keyframes slideIn {
+      from { opacity:0; transform: translateY(-4px); }
+      to   { opacity:1; transform: translateY(0); }
+    }
+    .item-card { animation: slideIn 0.18s ease; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<div class="header">
+  <div class="header-left">
+    <svg class="logo" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="4" width="18" height="21" rx="2" fill="#1c2130" stroke="#c8a96e" stroke-width="1.2"/>
+      <rect x="7" y="2" width="18" height="21" rx="2" fill="#171b26" stroke="#8a7048" stroke-width="1.2"/>
+      <line x1="10" y1="9"  x2="21" y2="9"  stroke="#c8a96e" stroke-width="1" stroke-linecap="round"/>
+      <line x1="10" y1="13" x2="21" y2="13" stroke="#c8a96e" stroke-width="1" stroke-linecap="round" opacity=".6"/>
+      <line x1="10" y1="17" x2="17" y2="17" stroke="#c8a96e" stroke-width="1" stroke-linecap="round" opacity=".4"/>
+      <circle cx="22" cy="21" r="5" fill="#0f1117" stroke="#4caf6e" stroke-width="1.3"/>
+      <line x1="22" y1="18.5" x2="22" y2="21" stroke="#4caf6e" stroke-width="1.2" stroke-linecap="round"/>
+      <line x1="22" y1="21"   x2="23.5" y2="22.5" stroke="#4caf6e" stroke-width="1.2" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <div class="header-title">Harvest Queue</div>
+      <div class="header-sub">Archive Collector</div>
+    </div>
+  </div>
+  <span class="badge" id="badge">0</span>
+</div>
+
+<!-- ── Toolbar ─────────────────────────────────────────────────────────────── -->
+<div class="toolbar">
+  <button class="btn primary" id="btn-download" title="Download harvest_queue.json">
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
+      <path d="M6 8.5 L2 4.5 h2.5 V1 h3 v3.5 H10 Z"/>
+      <rect x="1" y="9.5" width="10" height="1.5" rx="0.5"/>
+    </svg>
+    Download JSON
+  </button>
+
+  <button class="btn" id="btn-copy" title="Copy JSON to clipboard">
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
+      <rect x="1" y="3" width="7" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      <rect x="4" y="1" width="7" height="8" rx="1" fill="currentColor" opacity=".3" stroke="currentColor" stroke-width="1.2"/>
+    </svg>
+    Copy
+  </button>
+
+  <button class="btn danger ml-auto" id="btn-clear" title="Clear entire queue">
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
+      <path d="M2 3h8M5 3V1.5h2V3M4 3l.5 7h3l.5-7"/>
+    </svg>
+    Clear all
+  </button>
+</div>
+
+<!-- ── Filter ──────────────────────────────────────────────────────────────── -->
+<div class="filter-bar">
+  <input type="text" id="filter-input" placeholder="Filter by source, ID, or note…" autocomplete="off">
+</div>
+
+<!-- ── Queue list ──────────────────────────────────────────────────────────── -->
+<div class="queue-list" id="queue-list"></div>
+
+<!-- ── Empty state ─────────────────────────────────────────────────────────── -->
+<div class="empty-state" id="empty-state" style="display:none">
+  <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+    <rect x="6" y="6" width="22" height="28" rx="3" stroke="#c8a96e" stroke-width="1.5" fill="none"/>
+    <line x1="11" y1="14" x2="24" y2="14" stroke="#c8a96e" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="11" y1="19" x2="22" y2="19" stroke="#c8a96e" stroke-width="1.2" stroke-linecap="round" opacity=".5"/>
+    <line x1="11" y1="24" x2="18" y2="24" stroke="#c8a96e" stroke-width="1.2" stroke-linecap="round" opacity=".3"/>
+  </svg>
+  <p>No items yet.<br>
+    Right-click any archive item and choose<br>
+    <em>📥 Save to Harvest Queue</em>
+  </p>
+</div>
+
+<!-- ── Confirm overlay ─────────────────────────────────────────────────────── -->
+<div class="confirm-overlay" id="confirm-overlay">
+  <p>Clear the entire queue?<br><small style="color:var(--muted)">This cannot be undone.</small></p>
+  <div class="confirm-btns">
+    <button class="btn danger" id="confirm-yes">Yes, clear it</button>
+    <button class="btn"        id="confirm-no">Cancel</button>
+  </div>
+</div>
+
+<!-- ── Footer ──────────────────────────────────────────────────────────────── -->
+<div class="footer">
+  <span id="footer-stats">0 items · 0 sources</span>
+  <a href="https://github.com/noveoko/kowel" target="_blank">kowel project ↗</a>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
